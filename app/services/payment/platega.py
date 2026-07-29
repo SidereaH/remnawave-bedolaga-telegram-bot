@@ -137,6 +137,11 @@ class PlategaPaymentMixin:
             guest_contact_type=guest_contact_type,
             guest_contact_value=guest_contact_value,
         )
+        logger.info(
+            'Platega: отправляем metadata с платежом',
+            correlation_id=correlation_id,
+            provider_metadata=provider_metadata,
+        )
 
         try:
             response = await service.create_payment(
@@ -164,6 +169,7 @@ class PlategaPaymentMixin:
 
         metadata = {
             'raw_response': response,
+            'sent_metadata': provider_metadata,
             'language': language,
             'selected_method': payment_method_code,
         }
