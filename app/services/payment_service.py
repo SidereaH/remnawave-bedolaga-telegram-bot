@@ -815,6 +815,8 @@ class PaymentService(
         description: str,
         purchase_token: str,
         return_url: str,
+        contact_type: str | None = None,
+        contact_value: str | None = None,
     ) -> dict[str, Any] | None:
         """Create a payment for a guest (unauthenticated) landing-page purchase.
 
@@ -1030,6 +1032,8 @@ class PaymentService(
                 language=settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
                 return_url=return_url,
+                guest_contact_type=contact_type,
+                guest_contact_value=contact_value,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'platega')

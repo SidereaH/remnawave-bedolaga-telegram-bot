@@ -846,6 +846,8 @@ async def create_landing_purchase(
         description=f'{tariff.name} — {body.period_days}d',
         purchase_token=purchase.token,
         return_url=return_url,
+        contact_type=body.contact_type,
+        contact_value=body.contact_value,
     )
 
     if payment_result is None:

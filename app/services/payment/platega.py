@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.database.models import PaymentMethod, Subscription, TransactionType, User
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -41,6 +41,53 @@ class PlategaPaymentMixin:
     _FAILED_STATUSES = {'FAILED', 'CANCELED', 'EXPIRED'}
     _PENDING_STATUSES = {'PENDING', 'INPROGRESS'}
 
+    async def _build_platega_metadata(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int | None,
+        guest_contact_type: str | None = None,
+        guest_contact_value: str | None = None,
+    ) -> dict[str, str]:
+        """Metadata для запроса к Platega (обязательное требование провайдера).
+
+        Для платежей внутри бота — айди/юзернейм бота и покупателя; для
+        гостевых оплат с лендинга/кабинета (``user_id is None``, нет
+        Telegram-сессии) — URL сайта и, если известна, почта плательщика.
+        """
+        if user_id is not None:
+            # Точечный PK-lookup вместо тяжёлого get_user_by_id (с джойнами
+            # подписок/промогрупп) — здесь нужны только telegram_id/username.
+            # Best-effort как и аналогичный lookup в yookassa.py: сбой не должен
+            # блокировать создание платежа, только его metadata будет беднее.
+            try:
+                user = await db.get(User, user_id)
+            except Exception as error:
+                logger.warning('Не удалось получить пользователя для metadata Platega', user_id=user_id, error=error)
+                user = None
+            if user and user.telegram_id:
+                bot = getattr(self, 'bot', None)
+                # SBP-агент (_PlategaSbpAgent) не носит self.bot: id бота при
+                # отсутствии живого Bot-инстанса достаём из префикса токена
+                # (Telegram формирует токен как "{bot_id}:{hash}").
+                bot_id = str(bot.id) if bot is not None else (settings.BOT_TOKEN or '').split(':', 1)[0] or None
+                bot_username = settings.get_bot_username()
+                data = {
+                    'tg_bot_id': bot_id,
+                    'tg_bot_username': f'@{bot_username}' if bot_username else None,
+                    'tg_id': str(user.telegram_id),
+                    'tg_username': f'@{user.username}' if getattr(user, 'username', None) else None,
+                }
+                return {key: value for key, value in data.items() if value}
+            return {}
+
+        site_url = settings._normalized_cabinet_url()
+        data = {
+            'tg_bot_id': site_url,
+            'tg_username': guest_contact_value if guest_contact_type == 'email' else None,
+        }
+        return {key: value for key, value in data.items() if value}
+
     async def create_platega_payment(
         self,
         db: AsyncSession,
@@ -52,6 +99,8 @@ class PlategaPaymentMixin:
         payment_method_code: int,
         return_url: str | None = None,
         failed_url: str | None = None,
+        guest_contact_type: str | None = None,
+        guest_contact_value: str | None = None,
     ) -> dict[str, Any] | None:
         service: PlategaService | None = getattr(self, 'platega_service', None)
         if not service or not service.is_configured:
@@ -82,6 +131,13 @@ class PlategaPaymentMixin:
         effective_return_url = return_url or settings.get_platega_return_url()
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
+        provider_metadata = await self._build_platega_metadata(
+            db,
+            user_id=user_id,
+            guest_contact_type=guest_contact_type,
+            guest_contact_value=guest_contact_value,
+        )
+
         try:
             response = await service.create_payment(
                 payment_method=payment_method_code,
@@ -91,6 +147,7 @@ class PlategaPaymentMixin:
                 return_url=effective_return_url,
                 failed_url=effective_failed_url,
                 payload=payload_token,
+                metadata=provider_metadata,
             )
         except Exception as error:  # pragma: no cover - network errors
             logger.exception('Ошибка Platega при создании платежа', error=error)
@@ -207,11 +264,14 @@ class PlategaPaymentMixin:
         if not amount_kopeks:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
 
+        provider_metadata = await self._build_platega_metadata(db, user_id=user_id)
+
         response = await self.platega_service.create_subscription(
             amount=amount_kopeks / 100,
             currency=settings.PLATEGA_CURRENCY,
             interval=interval,
             description=getattr(tariff, 'name', None) or 'Подписка',
+            metadata=provider_metadata,
         )
 
         platega_id = (response or {}).get('transactionId')

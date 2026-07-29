@@ -78,6 +78,7 @@ class PlategaService:
         return_url: str | None = None,
         failed_url: str | None = None,
         payload: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         body: dict[str, Any] = {
             'paymentMethod': payment_method,
@@ -96,6 +97,8 @@ class PlategaService:
             body['failedUrl'] = failed_url
         if payload:
             body['payload'] = payload
+        if metadata:
+            body['metadata'] = metadata
 
         # v1 POST /transaction/process — документированный flow с заданным
         # paymentMethod (ссылка в поле `redirect`). v2 POST /v2/transaction/process
@@ -116,6 +119,7 @@ class PlategaService:
         currency: str,
         interval: int,
         description: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         body: dict[str, Any] = {
             'paymentMethod': 6,
@@ -128,6 +132,8 @@ class PlategaService:
 
         if description:
             body['description'] = self._sanitize_description(description, self._description_max_length)
+        if metadata:
+            body['metadata'] = metadata
 
         # Тот же выбор версии эндпоинта, что и в create_payment (см. #2934):
         # v1 POST /transaction/process, v2 POST /v2/transaction/process.

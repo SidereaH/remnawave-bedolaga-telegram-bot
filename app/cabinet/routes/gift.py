@@ -396,6 +396,8 @@ async def create_gift_purchase(
                 description=f'Gift: {tariff.name} ({body.period_days}d)',
                 purchase_token=purchase.token,
                 return_url=return_url,
+                contact_type=buyer_contact_type,
+                contact_value=buyer_contact_value,
             )
         finally:
             if bot:
